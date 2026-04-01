@@ -16,7 +16,9 @@
       "Bash(tasklist)",
       "Bash(wmic process:*)",
       "Bash(cmd /c \"taskkill /PID 13824 /F && taskkill /PID 25588 /F\")",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "Bash(curl -s \"https://iplaxxela.vercel.app/\")",
+      "Bash(curl:*)"
     ]
   }
 }
