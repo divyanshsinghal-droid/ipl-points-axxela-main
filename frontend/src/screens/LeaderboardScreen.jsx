@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { teamAbbr } from '../utils/iplTeams';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -333,7 +334,7 @@ export default function LeaderboardScreen() {
                             <RoleBadge role={p.role} />
                           </div>
                           <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                            {p.ipl_team} · {p.fantasy_team}
+                            {teamAbbr(p.ipl_team)} · {p.fantasy_team}
                           </div>
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'right' }}>

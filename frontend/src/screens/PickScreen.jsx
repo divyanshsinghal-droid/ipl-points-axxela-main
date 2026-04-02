@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { showToast } from '../utils/toast';
+import { teamAbbr } from '../utils/iplTeams';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -425,7 +426,7 @@ export default function PickScreen() {
                           {role}
                         </span>
                         <span style={{ fontFamily: "'Sora',sans-serif", fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {p.ipl_team}
+                          {teamAbbr(p.ipl_team)}
                         </span>
                       </div>
                     </div>

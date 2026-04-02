@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { teamAbbr } from '../utils/iplTeams';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -181,7 +182,7 @@ export default function TeamSquadScreen() {
                       {ROLE_LABELS[p.role] || p.role}
                     </span>
                     <span style={{ fontFamily: "'Sora',sans-serif", fontSize: 12, color: 'var(--text-muted)' }}>
-                      {p.ipl_team}
+                      {teamAbbr(p.ipl_team)}
                     </span>
                   </div>
                 </div>

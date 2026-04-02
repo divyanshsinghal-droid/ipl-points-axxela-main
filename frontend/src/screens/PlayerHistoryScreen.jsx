@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { teamAbbr } from '../utils/iplTeams';
 
 const BACK_LABELS = {
   leaderboard: '← Back to Leaderboard',
@@ -158,7 +159,7 @@ export default function PlayerHistoryScreen() {
                   {roleKey}
                 </span>
                 <span style={{ fontFamily: "'Sora',sans-serif", fontSize: 12, color: 'var(--text-muted)' }}>
-                  {player.ipl_team}
+                  {teamAbbr(player.ipl_team)}
                 </span>
               </div>
               <div style={{ fontFamily: "'Sora',sans-serif", fontSize: 11, color: 'var(--text-muted)' }}>
