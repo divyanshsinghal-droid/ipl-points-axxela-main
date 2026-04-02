@@ -331,6 +331,15 @@ def get_current_match(db: Session = Depends(get_db)):
     return _serialize_match(match)
 
 
+@app.get("/matches/upcoming-all")
+def get_all_upcoming_matches(db: Session = Depends(get_db)):
+    matches = (db.query(models.Match)
+               .filter(models.Match.is_completed == False)
+               .order_by(models.Match.deadline)
+               .all())
+    return [_serialize_match(m) for m in matches]
+
+
 # ─── PICKS ──────────────────────────────────────────────────────────────────
 
 @app.post("/picks/submit")

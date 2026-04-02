@@ -17,18 +17,17 @@ export default function PickScreen() {
   const navigate = useNavigate();
   const timerRef = useRef(null);
 
-  const [squad, setSquad]         = useState([]);
-  const [match, setMatch]         = useState(null);
-  const [history, setHistory]     = useState([]);
-  const [captainId, setCaptainId] = useState(null);
-  const [vcId, setVcId]           = useState(null);
+  const [squad, setSquad]           = useState([]);
+  const [matches, setMatches]       = useState([]);
+  const [selectedMatchId, setSelectedMatchId] = useState(null);
+  const [history, setHistory]       = useState([]);
+  const [captainMap, setCaptainMap] = useState({});  // {matchId: playerId}
+  const [vcMap, setVcMap]           = useState({});
   const [roleFilter, setRoleFilter] = useState('ALL');
-  const [teamMeta, setTeamMeta]   = useState(null);
-  const [timeLeft, setTimeLeft]   = useState('');
-  const [urgency, setUrgency]     = useState('green');
-  const [isLocked, setIsLocked]   = useState(false);
-  const [noMatch, setNoMatch]     = useState(false);
-  // toast handled globally via showToast()
+  const [teamMeta, setTeamMeta]     = useState(null);
+  const [timeLeft, setTimeLeft]     = useState('');
+  const [urgency, setUrgency]       = useState('green');
+  const [isLocked, setIsLocked]     = useState(false);
 
   useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
 
@@ -45,7 +44,7 @@ export default function PickScreen() {
           setTeamMeta({ id: myTeam.id, name: myTeam.name, color: myTeam.color_hex, owner: myTeam.owner_name });
           fetchSquad(myTeam.id, token);
         });
-      fetchMatch(token);
+      fetchMatches(token);
       fetchHistory(token);
     } catch { navigate('/'); }
   }, [navigate]);
@@ -57,16 +56,16 @@ export default function PickScreen() {
     if (res.ok) setSquad(await res.json());
   };
 
-  const fetchMatch = async (token) => {
-    const res = await fetch(`${API_BASE}/matches/current`, {
+  const fetchMatches = async (token) => {
+    const res = await fetch(`${API_BASE}/matches/upcoming-all`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (res.status === 404) { setNoMatch(true); return; }
-    if (res.ok) {
-      const data = await res.json();
-      setMatch(data);
-      startTimer(data.deadline);
-    }
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length === 0) return;
+    setMatches(data);
+    setSelectedMatchId(data[0].id);
+    startTimer(data[0].deadline);
   };
 
   const fetchHistory = async (token) => {
@@ -76,16 +75,14 @@ export default function PickScreen() {
     if (res.ok) {
       const data = await res.json();
       setHistory(data);
-      // Pre-fill existing pick for current match
-      setMatch(prev => {
-        if (!prev) return prev;
-        const existing = data.find(h => h.match_id === prev.id);
-        if (existing) {
-          setCaptainId(existing.captain_player_id);
-          setVcId(existing.vc_player_id);
-        }
-        return prev;
+      // Pre-fill existing picks for all matches
+      const newCap = {}, newVc = {};
+      data.forEach(h => {
+        if (h.captain_player_id) newCap[h.match_id] = h.captain_player_id;
+        if (h.vc_player_id)      newVc[h.match_id]  = h.vc_player_id;
       });
+      setCaptainMap(newCap);
+      setVcMap(newVc);
     }
   };
 
@@ -110,6 +107,20 @@ export default function PickScreen() {
     tick();
     timerRef.current = setInterval(tick, 1000);
   };
+
+  const selectMatch = (m) => {
+    setSelectedMatchId(m.id);
+    setIsLocked(false);
+    startTimer(m.deadline);
+  };
+
+  const match = matches.find(m => m.id === selectedMatchId) || null;
+  const captainId = captainMap[selectedMatchId] || null;
+  const vcId      = vcMap[selectedMatchId] || null;
+  const noMatch   = matches.length === 0;
+
+  const setCaptainId = (pid) => setCaptainMap(prev => ({ ...prev, [selectedMatchId]: pid }));
+  const setVcId      = (pid) => setVcMap(prev => ({ ...prev, [selectedMatchId]: pid }));
 
   const handleLockIn = async () => {
     if (!captainId || !vcId || !match || isLocked) return;
@@ -209,6 +220,31 @@ export default function PickScreen() {
             CHOOSE YOUR<br />
             <span style={{ color: 'var(--gold)' }}>CAPTAINS</span>
           </div>
+
+          {/* Match selector tabs — only shown when 2+ upcoming matches */}
+          {matches.length > 1 && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+              {matches.map((m, i) => {
+                const sel = m.id === selectedMatchId;
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => selectMatch(m)}
+                    style={{
+                      fontFamily: "'Sora',sans-serif", fontWeight: 600, fontSize: 11,
+                      border: 'none', borderRadius: 20, cursor: 'pointer',
+                      padding: '6px 14px', transition: 'var(--transition)',
+                      background: sel ? 'var(--gold-glow)' : 'var(--card)',
+                      color: sel ? 'var(--gold)' : 'var(--text-muted)',
+                      outline: `1px solid ${sel ? 'rgba(245,158,11,0.4)' : 'var(--border)'}`,
+                    }}
+                  >
+                    M{i + 1}: {m.team1.split(' ').map(w => w[0]).join('').slice(0,3)} v {m.team2.split(' ').map(w => w[0]).join('').slice(0,3)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           {/* Countdown banner */}
           {noMatch ? (
