@@ -427,6 +427,20 @@ def get_leaderboard_teams(db: Session = Depends(get_db)):
                          .filter(models.Match.is_completed == True)
                          .order_by(models.Match.match_date)
                          .all())
+    match_ids = [m.id for m in completed_matches]
+
+    # Bulk fetch all scores and picks — avoids N+1 queries
+    all_scores = db.query(models.MatchScore).filter(
+        models.MatchScore.match_id.in_(match_ids)
+    ).all() if match_ids else []
+    score_map = {(s.player_id, s.match_id): s for s in all_scores}
+
+    all_picks = db.query(models.CaptainPick).filter(
+        models.CaptainPick.match_id.in_(match_ids),
+        models.CaptainPick.is_locked == True
+    ).all() if match_ids else []
+    pick_map = {(p.fantasy_team_id, p.match_id): p for p in all_picks}
+
     res = []
     for t in teams:
         team_player_ids = [p.id for p in t.players]
@@ -435,12 +449,20 @@ def get_leaderboard_teams(db: Session = Depends(get_db)):
         recent_form = []
 
         for m in completed_matches:
-            pick = (db.query(models.CaptainPick)
-                    .filter_by(fantasy_team_id=t.id, match_id=m.id, is_locked=True)
-                    .first())
-            match_pts = _compute_team_pts_for_match(db, t.id, m.id, team_player_ids, pick)
-            # Base = same but without captain multiplier (pass None)
-            match_base = _compute_team_pts_for_match(db, t.id, m.id, team_player_ids, None)
+            pick = pick_map.get((t.id, m.id))
+            match_pts = 0.0
+            match_base = 0.0
+            for p_id in team_player_ids:
+                s = score_map.get((p_id, m.id))
+                if s:
+                    pts = s.fantasy_points_final if s.fantasy_points_final else s.fantasy_points_base
+                    match_base += pts
+                    if pick:
+                        if pick.captain_player_id == p_id:
+                            pts *= 2.0
+                        elif pick.vc_player_id == p_id:
+                            pts *= 1.5
+                    match_pts += pts
             total_pts += match_pts
             base_pts += match_base
             recent_form.append(round(match_pts, 1))
@@ -497,10 +519,15 @@ def get_match_leaderboard_players(match_id: int, db: Session = Depends(get_db)):
     match = db.query(models.Match).filter_by(id=match_id).first()
     if not match:
         raise HTTPException(status_code=404, detail="Match not found")
-    scores = db.query(models.MatchScore).filter_by(match_id=match_id).all()
+    from sqlalchemy.orm import joinedload
+    scores = (db.query(models.MatchScore)
+              .filter_by(match_id=match_id)
+              .join(models.Player, models.MatchScore.player_id == models.Player.id)
+              .options(joinedload(models.MatchScore.player).joinedload(models.Player.team))
+              .all())
     res = []
     for s in scores:
-        player = db.query(models.Player).filter_by(id=s.player_id).first()
+        player = s.player
         if not player:
             continue
         role_str = player.role.value if hasattr(player.role, "value") else str(player.role)
@@ -536,14 +563,33 @@ def get_leaderboard_players(role: Optional[str] = None, db: Session = Depends(ge
                 pass
 
     players = query.all()
+    player_ids = [p.id for p in players]
+
+    # Bulk fetch all scores and captain pick counts
+    all_scores = db.query(models.MatchScore).filter(
+        models.MatchScore.player_id.in_(player_ids)
+    ).order_by(models.MatchScore.match_id).all() if player_ids else []
+
+    from collections import defaultdict
+    scores_by_player = defaultdict(list)
+    for s in all_scores:
+        scores_by_player[s.player_id].append(s)
+
+    all_picks = db.query(models.CaptainPick).filter(
+        models.CaptainPick.is_locked == True
+    ).all()
+    c_count = defaultdict(int)
+    vc_count = defaultdict(int)
+    for cp in all_picks:
+        if cp.captain_player_id:
+            c_count[cp.captain_player_id] += 1
+        if cp.vc_player_id:
+            vc_count[cp.vc_player_id] += 1
+
     res = []
     for p in players:
-        scores = db.query(models.MatchScore).filter_by(player_id=p.id).all()
-        # Points include per-team multiplier if this player was picked as C/VC
-        # For a public leaderboard we show base points only (player-centric view)
+        scores = scores_by_player[p.id]
         total_pts = sum((s.fantasy_points_final if s.fantasy_points_final else s.fantasy_points_base) for s in scores)
-        c_times = db.query(models.CaptainPick).filter_by(captain_player_id=p.id).count()
-        vc_times = db.query(models.CaptainPick).filter_by(vc_player_id=p.id).count()
         runs = sum(s.runs for s in scores)
         wickets = sum(s.wickets for s in scores)
         highest_score = max([(s.fantasy_points_final if s.fantasy_points_final else s.fantasy_points_base) for s in scores] + [0])
@@ -557,7 +603,7 @@ def get_leaderboard_players(role: Optional[str] = None, db: Session = Depends(ge
             "role": role_str.split(".")[-1], "ipl_team": p.ipl_team,
             "fantasy_team": p.team.name if p.team else "Unsold",
             "runs": runs, "wickets": wickets,
-            "c_multiplier_count": c_times, "vc_multiplier_count": vc_times,
+            "c_multiplier_count": c_count[p.id], "vc_multiplier_count": vc_count[p.id],
             "total_pts": round(total_pts, 1),
             "avg_pts": round(total_pts / max(len(scores), 1), 1),
             "sparkline": sparkline, "highest_score": highest_score,

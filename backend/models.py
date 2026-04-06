@@ -86,3 +86,4 @@ class MatchScore(Base):
     breakdown_json = Column(String, default="{}")
     
     match = relationship("Match", back_populates="match_scores")
+    player = relationship("Player")
