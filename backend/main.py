@@ -208,29 +208,56 @@ def get_team_public_squad(team_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Team not found")
 
     completed_matches = (db.query(models.Match)
-                         .filter(models.Match.is_completed == True)
-                         .all())
+                         .filter(models.Match.is_completed == True).all())
+    match_ids = [m.id for m in completed_matches]
     team_player_ids = [p.id for p in team.players]
+
+    # Bulk fetch scores and picks
+    score_map = {}
+    if match_ids and team_player_ids:
+        for s in db.query(models.MatchScore).filter(
+            models.MatchScore.player_id.in_(team_player_ids),
+            models.MatchScore.match_id.in_(match_ids)
+        ).all():
+            score_map[(s.player_id, s.match_id)] = s
+
+    pick_map = {}
+    if match_ids:
+        for pk in db.query(models.CaptainPick).filter(
+            models.CaptainPick.fantasy_team_id == team_id,
+            models.CaptainPick.match_id.in_(match_ids),
+            models.CaptainPick.is_locked == True
+        ).all():
+            pick_map[pk.match_id] = pk
+
     team_total = 0.0
     for m in completed_matches:
-        pick = (db.query(models.CaptainPick)
-                .filter_by(fantasy_team_id=team_id, match_id=m.id, is_locked=True)
-                .first())
-        team_total += _compute_team_pts_for_match(db, team_id, m.id, team_player_ids, pick)
+        pick = pick_map.get(m.id)
+        for p_id in team_player_ids:
+            s = score_map.get((p_id, m.id))
+            if s:
+                pts = s.fantasy_points_final if s.fantasy_points_final else s.fantasy_points_base
+                if pick:
+                    if pick.captain_player_id == p_id:
+                        pts *= 2.0
+                    elif pick.vc_player_id == p_id:
+                        pts *= 1.5
+                team_total += pts
 
     players = []
     for p in team.players:
-        scores = db.query(models.MatchScore).filter_by(player_id=p.id).all()
-        total_pts = sum((s.fantasy_points_final if s.fantasy_points_final else s.fantasy_points_base) for s in scores)
+        total_pts = sum(
+            (s.fantasy_points_final if s.fantasy_points_final else s.fantasy_points_base)
+            for mid in match_ids
+            for s in [score_map.get((p.id, mid))] if s
+        )
         role_str = p.role.value if hasattr(p.role, "value") else str(p.role)
-        role_str = role_str.split(".")[-1]
         players.append({
-            "id": p.id, "name": p.name, "role": role_str,
+            "id": p.id, "name": p.name, "role": role_str.split(".")[-1],
             "ipl_team": p.ipl_team, "total_pts": round(total_pts, 1),
         })
 
     players.sort(key=lambda x: x["total_pts"], reverse=True)
-
     return {
         "team": {
             "id": team.id, "name": team.name, "team_code": team.team_code,
@@ -250,18 +277,44 @@ def get_team_captaincy_history(team_id: int, db: Session = Depends(get_db)):
 
     team_player_ids = [p.id for p in team.players]
     picks = (db.query(models.CaptainPick)
-             .filter_by(fantasy_team_id=team_id, is_locked=True)
-             .all())
+             .filter_by(fantasy_team_id=team_id, is_locked=True).all())
+
+    completed_match_ids = {m.id: m for m in db.query(models.Match)
+                           .filter(models.Match.is_completed == True).all()}
+    pick_match_ids = [pk.match_id for pk in picks if pk.match_id in completed_match_ids]
+
+    score_map = {}
+    if pick_match_ids and team_player_ids:
+        for s in db.query(models.MatchScore).filter(
+            models.MatchScore.player_id.in_(team_player_ids),
+            models.MatchScore.match_id.in_(pick_match_ids)
+        ).all():
+            score_map[(s.player_id, s.match_id)] = s
+
+    all_player_ids = list({pk.captain_player_id for pk in picks} | {pk.vc_player_id for pk in picks} - {None})
+    player_map = {p.id: p for p in db.query(models.Player).filter(
+        models.Player.id.in_(all_player_ids)
+    ).all()} if all_player_ids else {}
 
     res = []
     for pick in picks:
-        match = db.query(models.Match).filter_by(id=pick.match_id).first()
-        if not match or not match.is_completed:
+        match = completed_match_ids.get(pick.match_id)
+        if not match:
             continue
-        c_player = db.query(models.Player).filter_by(id=pick.captain_player_id).first()
-        vc_player = db.query(models.Player).filter_by(id=pick.vc_player_id).first()
-        team_pts = _compute_team_pts_for_match(db, team_id, match.id, team_player_ids, pick)
-        base_pts = _compute_team_pts_for_match(db, team_id, match.id, team_player_ids, None)
+        base_pts = 0.0
+        team_pts = 0.0
+        for p_id in team_player_ids:
+            s = score_map.get((p_id, match.id))
+            if s:
+                pts = s.fantasy_points_final if s.fantasy_points_final else s.fantasy_points_base
+                base_pts += pts
+                if pick.captain_player_id == p_id:
+                    pts *= 2.0
+                elif pick.vc_player_id == p_id:
+                    pts *= 1.5
+                team_pts += pts
+        c_player = player_map.get(pick.captain_player_id)
+        vc_player = player_map.get(pick.vc_player_id)
         res.append({
             "match_id": match.id,
             "match_name": f"{match.team1} v {match.team2}",
@@ -282,11 +335,15 @@ def get_team_match_scores(team_id: int, match_id: int, db: Session = Depends(get
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
     pick = (db.query(models.CaptainPick)
-            .filter_by(fantasy_team_id=team_id, match_id=match_id, is_locked=True)
-            .first())
+            .filter_by(fantasy_team_id=team_id, match_id=match_id, is_locked=True).first())
+    player_ids = [p.id for p in team.players]
+    scores = {s.player_id: s for s in db.query(models.MatchScore).filter(
+        models.MatchScore.player_id.in_(player_ids),
+        models.MatchScore.match_id == match_id
+    ).all()}
     res = []
     for player in team.players:
-        score = db.query(models.MatchScore).filter_by(player_id=player.id, match_id=match_id).first()
+        score = scores.get(player.id)
         if not score:
             continue
         pts = score.fantasy_points_final if score.fantasy_points_final else score.fantasy_points_base
@@ -298,11 +355,9 @@ def get_team_match_scores(team_id: int, match_id: int, db: Session = Depends(get
                 multiplier = 1.5
         role_str = player.role.value if hasattr(player.role, "value") else str(player.role)
         res.append({
-            "player_id": player.id,
-            "player_name": player.name,
+            "player_id": player.id, "player_name": player.name,
             "role": role_str.split(".")[-1],
-            "base_pts": round(pts, 1),
-            "multiplier": multiplier,
+            "base_pts": round(pts, 1), "multiplier": multiplier,
             "final_pts": round(pts * multiplier, 1),
             "is_captain": pick and pick.captain_player_id == player.id,
             "is_vc": pick and pick.vc_player_id == player.id,
