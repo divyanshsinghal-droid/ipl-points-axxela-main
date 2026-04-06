@@ -257,9 +257,12 @@ def _parse_outdec(outdec: str, bowler_name: str, raw_stats: dict):
 
     # Caught and bowled: "c & b BowlerName"
     elif re.match(r'^c\s*&\s*b\s+', low):
-        ensure(bowler_name)
-        if bowler_name:
-            raw_stats[bowler_name]["catches"] += 1
+        # Extract name from dismissal text directly (bowler field may be null in some APIs)
+        cb_name = re.sub(r'^c\s*&\s*b\s+', '', txt, flags=re.IGNORECASE).strip()
+        target = cb_name if cb_name else bowler_name
+        ensure(target)
+        if target:
+            raw_stats[target]["catches"] += 1
 
     # Caught: "c FielderName b BowlerName"
     elif low.startswith("c "):
@@ -811,18 +814,24 @@ def parse_cricbuzz_scorecard(scorecard: list) -> dict:
 
 def _words_match(raw_name: str, db_name: str) -> bool:
     """
-    Validate that every significant word (>3 chars) in raw_name fuzzy-matches
-    at least one word in db_name (cutoff 0.75).
+    Validate that every significant word (>3 chars) in the SHORTER name fuzzy-matches
+    at least one word in the longer name (cutoff 0.7).
 
-    Prevents surname-only matches like "Brijesh Sharma" → "Jitesh Sharma"
-    while still allowing "Khaleel Ahmed" → "Syed Khaleel Ahmed".
+    Using the shorter name as source prevents failures when the API returns a
+    middle name the DB omits (e.g. "Digvesh Singh Rathi" → "Digvesh Rathi"),
+    while still blocking false surname-only matches like "Brijesh Sharma" → "Jitesh Sharma".
+    Allows "Syed Khaleel Ahmed" → "Khaleel Ahmed" in both directions.
     """
     raw_words = [w for w in raw_name.lower().split() if len(w) > 3]
-    db_words = db_name.lower().split()
-    if not raw_words:
+    db_words_list = [w for w in db_name.lower().split() if len(w) > 3]
+    # Use words from whichever name is shorter (fewer significant words)
+    check_words = raw_words if len(raw_words) <= len(db_words_list) else db_words_list
+    all_words = raw_words + db_words_list
+    if not check_words:
         return True  # very short name — trust overall ratio
-    for word in raw_words:
-        if not difflib.get_close_matches(word, db_words, n=1, cutoff=0.7):
+    for word in check_words:
+        other_words = [w for w in all_words if w != word]
+        if not difflib.get_close_matches(word, other_words, n=1, cutoff=0.7):
             return False
     return True
 
