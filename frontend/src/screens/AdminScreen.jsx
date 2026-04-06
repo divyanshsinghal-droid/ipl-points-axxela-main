@@ -153,7 +153,7 @@ export default function AdminScreen() {
       const res = await fetch(`${API_BASE}/admin/sync-match/${matchId}${qs}`, { method: 'POST', headers: authHeader() });
       const data = await res.json();
       if (res.ok) {
-        setSyncLog({ matchId, status: data.status, synced: data.synced_players || 0, unmatched: data.unmatched || [], matched: data.matched || [], message: data.message || null, dotsSynced: data.dots_synced ?? false, dotsApplied: data.dots_applied || [] });
+        setSyncLog({ matchId, status: data.status, synced: data.synced_players || 0, unmatched: data.unmatched || [], matched: data.matched || [], rawPlayers: data.raw_players || [], message: data.message || null, dotsSynced: data.dots_synced ?? false, dotsApplied: data.dots_applied || [] });
         showToast(`✅ Synced ${data.synced_players || 0} players`);
         loadData();
       } else {
@@ -798,6 +798,12 @@ export default function AdminScreen() {
                       <details style={{ fontFamily: "'Sora',sans-serif", fontSize: 11, color: 'var(--text-muted)' }}>
                         <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}>Matched players ({syncLog.matched.length})</summary>
                         <div style={{ marginTop: 4, lineHeight: 1.8 }}>{syncLog.matched.join(' · ')}</div>
+                      </details>
+                    )}
+                    {syncLog.rawPlayers?.length > 0 && (
+                      <details style={{ fontFamily: "'Sora',sans-serif", fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                        <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}>Raw API players ({syncLog.rawPlayers.length})</summary>
+                        <div style={{ marginTop: 4, lineHeight: 1.8 }}>{syncLog.rawPlayers.join(' · ')}</div>
                       </details>
                     )}
                   </div>

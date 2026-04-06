@@ -954,6 +954,7 @@ def sync_match_points(match_id: int):
             "synced_players": processed,
             "matched": matched,
             "unmatched": unmatched,
+            "raw_players": list(raw_stats.keys()),
             "dots_synced": dots_synced,
             "dots_applied": dots_applied,
         }
