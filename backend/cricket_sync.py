@@ -815,23 +815,25 @@ def parse_cricbuzz_scorecard(scorecard: list) -> dict:
 def _words_match(raw_name: str, db_name: str) -> bool:
     """
     Validate that every significant word (>3 chars) in the SHORTER name fuzzy-matches
-    at least one word in the longer name (cutoff 0.7).
+    at least one word in the LONGER name (cutoff 0.7).
 
     Using the shorter name as source prevents failures when the API returns a
     middle name the DB omits (e.g. "Digvesh Singh Rathi" → "Digvesh Rathi"),
     while still blocking false surname-only matches like "Brijesh Sharma" → "Jitesh Sharma".
-    Allows "Syed Khaleel Ahmed" → "Khaleel Ahmed" in both directions.
     """
     raw_words = [w for w in raw_name.lower().split() if len(w) > 3]
-    db_words_list = [w for w in db_name.lower().split() if len(w) > 3]
-    # Use words from whichever name is shorter (fewer significant words)
-    check_words = raw_words if len(raw_words) <= len(db_words_list) else db_words_list
-    all_words = raw_words + db_words_list
+    db_words = [w for w in db_name.lower().split() if len(w) > 3]
+    db_all = db_name.lower().split()
+    raw_all = raw_name.lower().split()
+    # Check words from the shorter name against words in the longer name
+    if len(raw_words) <= len(db_words):
+        check_words, target_words = raw_words, db_all
+    else:
+        check_words, target_words = db_words, raw_all
     if not check_words:
         return True  # very short name — trust overall ratio
     for word in check_words:
-        other_words = [w for w in all_words if w != word]
-        if not difflib.get_close_matches(word, other_words, n=1, cutoff=0.7):
+        if not difflib.get_close_matches(word, target_words, n=1, cutoff=0.7):
             return False
     return True
 
@@ -839,12 +841,14 @@ def _words_match(raw_name: str, db_name: str) -> bool:
 def _match_player(raw_name: str, db_names: dict) -> tuple | None:
     """
     Return (player_id, db_name) for the best matching DB player, or None.
-    Uses difflib for overall similarity then word-level validation to reject
-    false positives from shared surnames.
+    Strips (sub) prefix before matching, then uses difflib overall similarity
+    and word-level validation to reject false positives from shared surnames.
     """
-    candidates = difflib.get_close_matches(raw_name, list(db_names.values()), n=3, cutoff=0.7)
+    # Strip substitute fielder prefix e.g. "(sub)Jacob Bethell"
+    clean_name = re.sub(r'^\(sub\)\s*', '', raw_name, flags=re.IGNORECASE).strip()
+    candidates = difflib.get_close_matches(clean_name, list(db_names.values()), n=3, cutoff=0.7)
     for candidate in candidates:
-        if _words_match(raw_name, candidate):
+        if _words_match(clean_name, candidate):
             p_id = next(uid for uid, uname in db_names.items() if uname == candidate)
             return p_id, candidate
     return None
