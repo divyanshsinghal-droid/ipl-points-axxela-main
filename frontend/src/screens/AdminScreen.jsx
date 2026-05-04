@@ -674,10 +674,12 @@ export default function AdminScreen() {
             ) : matches.map(m => (
               <div key={m.id}>
                 <div style={{
-                  background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)',
+                  background: m.is_hidden ? 'rgba(239,68,68,0.03)' : 'rgba(255,255,255,0.02)',
+                  border: `1px solid ${m.is_hidden ? 'rgba(239,68,68,0.25)' : 'var(--border)'}`,
                   borderRadius: 12, padding: 24,
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                   flexWrap: 'wrap', gap: 16,
+                  opacity: m.is_hidden ? 0.7 : 1,
                 }}>
                   {/* Left: match info */}
                   <div>
@@ -695,6 +697,11 @@ export default function AdminScreen() {
                       <span style={{ fontFamily: "'Sora',sans-serif", fontSize: 11, color: 'var(--text-muted)', marginLeft: 10 }}>
                         {new Date(m.match_date).toLocaleDateString([], { day: 'numeric', month: 'short' })}
                       </span>
+                      {m.is_hidden && (
+                        <span style={{ fontFamily: "'Sora',sans-serif", fontSize: 11, fontWeight: 700, color: 'var(--red)', marginLeft: 10, letterSpacing: '0.06em' }}>
+                          HIDDEN
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -757,6 +764,27 @@ export default function AdminScreen() {
                       style={{ padding: '10px 16px', borderRadius: 8, fontSize: 11, fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase', cursor: 'pointer', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.4)', color: 'var(--gold)' }}
                     >
                       Manage Picks
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const res = await fetch(`${API_BASE}/admin/matches/${m.id}/toggle-hidden`, { method: 'POST', headers: authHeader() });
+                        if (res.ok) {
+                          const d = await res.json();
+                          showToast(d.is_hidden ? 'Match hidden' : 'Match visible');
+                          loadData();
+                        } else {
+                          showToast('Failed to toggle', 'error');
+                        }
+                      }}
+                      style={{
+                        padding: '10px 16px', borderRadius: 8, fontSize: 11, fontWeight: 700,
+                        letterSpacing: '0.5px', textTransform: 'uppercase', cursor: 'pointer',
+                        background: m.is_hidden ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.08)',
+                        border: m.is_hidden ? '1px solid rgba(16,185,129,0.4)' : '1px solid rgba(239,68,68,0.3)',
+                        color: m.is_hidden ? 'var(--green)' : 'var(--red)',
+                      }}
+                    >
+                      {m.is_hidden ? 'Show Match' : 'Hide Match'}
                     </button>
                   </div>
                 </div>

@@ -14,6 +14,17 @@ Base.metadata.create_all(bind=engine)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from database import SessionLocal
+    from sqlalchemy import text
+
+    # Migration: add is_hidden column if it doesn't exist yet
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE matches ADD COLUMN is_hidden BOOLEAN DEFAULT FALSE"))
+            conn.commit()
+        print("Migration: added is_hidden column to matches")
+    except Exception:
+        pass  # Column already exists
+
     db = SessionLocal()
     try:
         team_count = db.query(models.Team).count()
@@ -63,6 +74,7 @@ def _serialize_match(m: models.Match) -> dict:
         "match_date": m.match_date.isoformat() + "Z",
         "deadline": m.deadline.isoformat() + "Z",
         "is_completed": m.is_completed,
+        "is_hidden": bool(m.is_hidden),
         "cricket_live_match_id": m.cricket_live_match_id,
     }
 
@@ -208,7 +220,8 @@ def get_team_public_squad(team_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Team not found")
 
     completed_matches = (db.query(models.Match)
-                         .filter(models.Match.is_completed == True).all())
+                         .filter(models.Match.is_completed == True,
+                                 models.Match.is_hidden == False).all())
     match_ids = [m.id for m in completed_matches]
     team_player_ids = [p.id for p in team.players]
 
@@ -280,7 +293,8 @@ def get_team_captaincy_history(team_id: int, db: Session = Depends(get_db)):
              .filter_by(fantasy_team_id=team_id, is_locked=True).all())
 
     completed_match_ids = {m.id: m for m in db.query(models.Match)
-                           .filter(models.Match.is_completed == True).all()}
+                           .filter(models.Match.is_completed == True,
+                                   models.Match.is_hidden == False).all()}
     pick_match_ids = [pk.match_id for pk in picks if pk.match_id in completed_match_ids]
 
     score_map = {}
@@ -370,7 +384,9 @@ def get_team_match_scores(team_id: int, match_id: int, db: Session = Depends(get
 
 @app.get("/matches")
 def list_all_matches(db: Session = Depends(get_db)):
-    matches = db.query(models.Match).order_by(models.Match.match_date).all()
+    matches = (db.query(models.Match)
+               .filter(models.Match.is_hidden == False)
+               .order_by(models.Match.match_date).all())
     return [_serialize_match(m) for m in matches]
 
 
@@ -378,7 +394,7 @@ def list_all_matches(db: Session = Depends(get_db)):
 @app.get("/matches/upcoming", response_model=schemas.MatchResponse)
 def get_current_match(db: Session = Depends(get_db)):
     match = (db.query(models.Match)
-             .filter(models.Match.is_completed == False)
+             .filter(models.Match.is_completed == False, models.Match.is_hidden == False)
              .order_by(models.Match.deadline)
              .first())
     if not match:
@@ -389,7 +405,7 @@ def get_current_match(db: Session = Depends(get_db)):
 @app.get("/matches/upcoming-all")
 def get_all_upcoming_matches(db: Session = Depends(get_db)):
     matches = (db.query(models.Match)
-               .filter(models.Match.is_completed == False)
+               .filter(models.Match.is_completed == False, models.Match.is_hidden == False)
                .order_by(models.Match.deadline)
                .all())
     return [_serialize_match(m) for m in matches]
@@ -479,7 +495,8 @@ def get_pick_history(db: Session = Depends(get_db),
 def get_leaderboard_teams(db: Session = Depends(get_db)):
     teams = db.query(models.Team).all()
     completed_matches = (db.query(models.Match)
-                         .filter(models.Match.is_completed == True)
+                         .filter(models.Match.is_completed == True,
+                                 models.Match.is_hidden == False)
                          .order_by(models.Match.match_date)
                          .all())
     match_ids = [m.id for m in completed_matches]
@@ -545,7 +562,7 @@ def get_leaderboard_teams(db: Session = Depends(get_db)):
 @app.get("/leaderboard/match/{match_id}")
 def get_match_leaderboard(match_id: int, db: Session = Depends(get_db)):
     match = db.query(models.Match).filter_by(id=match_id).first()
-    if not match:
+    if not match or match.is_hidden:
         raise HTTPException(status_code=404, detail="Match not found")
     teams = db.query(models.Team).all()
     res = []
@@ -572,7 +589,7 @@ def get_match_leaderboard(match_id: int, db: Session = Depends(get_db)):
 @app.get("/leaderboard/match/{match_id}/players")
 def get_match_leaderboard_players(match_id: int, db: Session = Depends(get_db)):
     match = db.query(models.Match).filter_by(id=match_id).first()
-    if not match:
+    if not match or match.is_hidden:
         raise HTTPException(status_code=404, detail="Match not found")
     from sqlalchemy.orm import joinedload
     scores = (db.query(models.MatchScore)
@@ -681,13 +698,14 @@ def get_player_history(player_id: int, db: Session = Depends(get_db)):
     scores = (db.query(models.MatchScore)
               .filter_by(player_id=player_id)
               .join(models.Match)
+              .filter(models.Match.is_hidden == False)
               .order_by(models.Match.match_date)
               .all())
 
     c_times = db.query(models.CaptainPick).filter_by(captain_player_id=player_id).count()
     vc_times = db.query(models.CaptainPick).filter_by(vc_player_id=player_id).count()
     total_base = sum((s.fantasy_points_final if s.fantasy_points_final else s.fantasy_points_base) for s in scores)
-    total_completed_matches = db.query(models.Match).filter_by(is_completed=True).count()
+    total_completed_matches = db.query(models.Match).filter_by(is_completed=True, is_hidden=False).count()
 
     matches_arr = []
     for s in scores:
@@ -1093,6 +1111,18 @@ def get_admin_audit(match_id: int, db: Session = Depends(get_db),
             result.extend(entries)
 
     return sorted(result, key=lambda x: x["final_pts"], reverse=True)
+
+
+@app.post("/admin/matches/{match_id}/toggle-hidden")
+def toggle_match_hidden(match_id: int, db: Session = Depends(get_db),
+                        current_admin: dict = Depends(auth.get_current_admin)):
+    """Toggle is_hidden on a match. Hidden matches are invisible to all public endpoints."""
+    match = db.query(models.Match).filter_by(id=match_id).first()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+    match.is_hidden = not bool(match.is_hidden)
+    db.commit()
+    return {"status": "ok", "match_id": match_id, "is_hidden": match.is_hidden}
 
 
 @app.post("/admin/players")

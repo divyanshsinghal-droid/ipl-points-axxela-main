@@ -42,6 +42,7 @@ class Match(Base):
     team2 = Column(String)
     deadline = Column(DateTime)
     is_completed = Column(Boolean, default=False)
+    is_hidden = Column(Boolean, default=False)
     cricket_live_match_id = Column(Integer, nullable=True)  # Cricket Live Line API match ID
     
     match_scores = relationship("MatchScore", back_populates="match")

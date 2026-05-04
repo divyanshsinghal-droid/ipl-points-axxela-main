@@ -113,12 +113,18 @@ def _store_matches_from_series(match_list: list) -> int:
             m_id = str(match.get("id", ""))
             if not m_id:
                 continue
+
+            status = match.get("status", "").lower()
+            is_completed = any(w in status for w in ("won", "draw", "tied", "abandoned"))
+
+            # Primary dedup: exact ipl_match_id match
             existing = db.query(models.Match).filter_by(ipl_match_id=m_id).first()
             if existing:
-                status = match.get("status", "").lower()
-                if any(w in status for w in ("won", "draw", "tied", "abandoned")) and not existing.is_completed:
+                if is_completed and not existing.is_completed:
                     existing.is_completed = True
                 continue
+
+            # Parse date before the fallback dedup check
             try:
                 dt = datetime.strptime(match["dateTimeGMT"], "%Y-%m-%dT%H:%M:%S")
             except Exception:
@@ -126,15 +132,45 @@ def _store_matches_from_series(match_list: list) -> int:
                     dt = datetime.strptime(match["date"], "%Y-%m-%d")
                 except Exception:
                     continue
+
             teams = match.get("teams", ["TBD", "TBD"])
-            status = match.get("status", "").lower()
+            t1 = teams[0] if teams else "TBD"
+            t2 = teams[1] if len(teams) > 1 else "TBD"
+
+            # Fallback dedup: same two teams on the same calendar day (handles API ID changes).
+            # If found, update the stored ipl_match_id so future syncs hit the primary path.
+            # This preserves all existing captain picks linked to the old row.
+            day_start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end   = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+            same_day = db.query(models.Match).filter(
+                models.Match.match_date >= day_start,
+                models.Match.match_date <= day_end,
+            ).all()
+            duplicate = next(
+                (m for m in same_day if
+                 ((_team_match(t1, m.team1) and _team_match(t2, m.team2)) or
+                  (_team_match(t1, m.team2) and _team_match(t2, m.team1)))),
+                None
+            )
+            if duplicate:
+                logging.info(
+                    f"Match ID changed for {t1} vs {t2} on {dt.date()}: "
+                    f"{duplicate.ipl_match_id} → {m_id}. Updating ID, keeping existing row."
+                )
+                duplicate.ipl_match_id = m_id
+                duplicate.match_date = dt
+                duplicate.deadline = dt - timedelta(minutes=30)
+                if is_completed and not duplicate.is_completed:
+                    duplicate.is_completed = True
+                continue
+
             db.add(models.Match(
                 ipl_match_id=m_id,
                 match_date=dt,
-                team1=teams[0] if teams else "TBD",
-                team2=teams[1] if len(teams) > 1 else "TBD",
+                team1=t1,
+                team2=t2,
                 deadline=dt - timedelta(minutes=30),
-                is_completed=any(w in status for w in ("won", "draw", "tied", "abandoned")),
+                is_completed=is_completed,
             ))
             count += 1
         db.commit()
