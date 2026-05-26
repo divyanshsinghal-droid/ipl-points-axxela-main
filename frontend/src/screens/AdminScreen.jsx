@@ -104,6 +104,9 @@ export default function AdminScreen() {
   const [setCaptainState, setSetCaptainState] = useState(null); // { matchId, teamId, teamName, players, captainId, vcId }
   const [matchPicksState, setMatchPicksState] = useState(null); // { match, teams }
   const [cricketLiveIds, setCricketLiveIds] = useState({});    // { matchId: string }
+  const [iplMatchIds, setIplMatchIds] = useState({});          // { matchId: string }
+  const [createMatchOpen, setCreateMatchOpen] = useState(false);
+  const [createMatchForm, setCreateMatchForm] = useState({ team1: '', team2: '', matchDate: '' });
   const { toast, show: showToast } = useToast();
 
   const authHeader = () => ({ Authorization: `Bearer ${localStorage.getItem('admin_token')}` });
@@ -122,6 +125,11 @@ export default function AdminScreen() {
         setCricketLiveIds(prev => {
           const init = {};
           ms.forEach(m => { init[m.id] = prev[m.id] ?? (m.cricket_live_match_id ? String(m.cricket_live_match_id) : ''); });
+          return init;
+        });
+        setIplMatchIds(prev => {
+          const init = {};
+          ms.forEach(m => { init[m.id] = prev[m.id] ?? (m.ipl_match_id || ''); });
           return init;
         });
       }
@@ -256,6 +264,29 @@ export default function AdminScreen() {
     if (res.ok) setMatchPicksState(s => ({ ...s, teams: [] }));
     const data = await res.json();
     setMatchPicksState(s => ({ ...s, teams: data }));
+  };
+
+  const handleCreateMatch = async () => {
+    const { team1, team2, matchDate } = createMatchForm;
+    if (!team1.trim() || !team2.trim() || !matchDate) {
+      showToast('Fill in all fields', 'error'); return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/admin/matches`, {
+        method: 'POST',
+        headers: { ...authHeader(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ team1: team1.trim(), team2: team2.trim(), match_date: matchDate }),
+      });
+      if (res.ok) {
+        showToast('Match created');
+        setCreateMatchOpen(false);
+        setCreateMatchForm({ team1: '', team2: '', matchDate: '' });
+        loadData();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast(`❌ ${err.detail || 'Failed to create match'}`, 'error');
+      }
+    } catch { showToast('❌ Network error', 'error'); }
   };
 
   if (!isAuth) return <AdminLogin onLogin={() => setIsAuth(true)} />;
@@ -543,6 +574,66 @@ export default function AdminScreen() {
         </>
       )}
 
+      {/* Create Match Modal */}
+      {createMatchOpen && (
+        <>
+          <div onClick={() => setCreateMatchOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)', zIndex: 300 }} />
+          <div style={{
+            position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
+            background: 'var(--card)', border: '1px solid rgba(16,185,129,0.3)',
+            borderRadius: 'var(--radius)', padding: 28, width: '100%', maxWidth: 420, zIndex: 301,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 22, color: 'var(--green)', letterSpacing: '0.05em' }}>
+                CREATE MATCH
+              </div>
+              <button onClick={() => setCreateMatchOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 18 }}>✕</button>
+            </div>
+            <div style={{ fontFamily: "'Sora',sans-serif", fontSize: 11, color: 'var(--text-muted)', marginBottom: 20 }}>
+              A placeholder ID will be assigned. Set the real IPL Match ID later from the match card once you have it.
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <div style={{ fontFamily: "'Sora',sans-serif", fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6, letterSpacing: '0.06em' }}>TEAM 1</div>
+                <input
+                  type="text"
+                  placeholder="e.g. Mumbai Indians"
+                  value={createMatchForm.team1}
+                  onChange={e => setCreateMatchForm(s => ({ ...s, team1: e.target.value }))}
+                  style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', color: 'var(--text-primary)', fontFamily: "'Sora',sans-serif", fontSize: 13, boxSizing: 'border-box', outline: 'none' }}
+                />
+              </div>
+              <div>
+                <div style={{ fontFamily: "'Sora',sans-serif", fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6, letterSpacing: '0.06em' }}>TEAM 2</div>
+                <input
+                  type="text"
+                  placeholder="e.g. Chennai Super Kings"
+                  value={createMatchForm.team2}
+                  onChange={e => setCreateMatchForm(s => ({ ...s, team2: e.target.value }))}
+                  style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', color: 'var(--text-primary)', fontFamily: "'Sora',sans-serif", fontSize: 13, boxSizing: 'border-box', outline: 'none' }}
+                />
+              </div>
+              <div>
+                <div style={{ fontFamily: "'Sora',sans-serif", fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6, letterSpacing: '0.06em' }}>MATCH DATE &amp; TIME (IST)</div>
+                <input
+                  type="datetime-local"
+                  value={createMatchForm.matchDate}
+                  onChange={e => setCreateMatchForm(s => ({ ...s, matchDate: e.target.value }))}
+                  style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', color: 'var(--text-primary)', fontFamily: "'Sora',sans-serif", fontSize: 13, boxSizing: 'border-box', outline: 'none', colorScheme: 'dark' }}
+                />
+                <div style={{ fontFamily: "'Sora',sans-serif", fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>Deadline is auto-set 30 min before match time.</div>
+              </div>
+            </div>
+            <button
+              onClick={handleCreateMatch}
+              style={{ width: '100%', marginTop: 24, padding: 12, background: 'var(--green)', color: '#000', border: 'none', borderRadius: 8, fontFamily: "'Bebas Neue',sans-serif", fontSize: 18, letterSpacing: 1, cursor: 'pointer', fontWeight: 700 }}
+            >
+              CREATE MATCH
+            </button>
+          </div>
+        </>
+      )}
+
       <div style={{ minHeight: 'calc(100vh - 68px)', paddingBottom: 80 }}>
         {/* ── PAGE HEADER ── */}
         <div className="container" style={{ paddingTop: 32 }}>
@@ -657,13 +748,21 @@ export default function AdminScreen() {
           </div>
 
           {/* ── SECTION 2: MATCH MANAGEMENT ── */}
-          <div style={{ textAlign: 'center', marginBottom: 28 }}>
-            <div style={{ fontFamily: "'Sora',sans-serif", fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.1em', marginBottom: 6 }}>
-              Schedule &amp; Operations
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 28 }}>
+            <div>
+              <div style={{ fontFamily: "'Sora',sans-serif", fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', letterSpacing: '0.1em', marginBottom: 6 }}>
+                Schedule &amp; Operations
+              </div>
+              <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 32, color: 'var(--text-primary)', letterSpacing: 2 }}>
+                MATCH MANAGEMENT
+              </div>
             </div>
-            <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: 32, color: 'var(--text-primary)', letterSpacing: 2 }}>
-              MATCH MANAGEMENT
-            </div>
+            <button
+              onClick={() => setCreateMatchOpen(true)}
+              style={{ padding: '10px 18px', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.4)', color: 'var(--green)', borderRadius: 8, fontFamily: "'Sora',sans-serif", fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}
+            >
+              + CREATE MATCH
+            </button>
           </div>
 
           <div style={{ maxWidth: 800, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 48 }}>
@@ -707,6 +806,43 @@ export default function AdminScreen() {
 
                   {/* Right: action buttons */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 150 }}>
+                    {/* IPL Match ID input (cricketdata.org scorecard ID) */}
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <input
+                        type="text"
+                        placeholder="IPL Match ID"
+                        value={iplMatchIds[m.id] ?? ''}
+                        onChange={e => setIplMatchIds(prev => ({ ...prev, [m.id]: e.target.value }))}
+                        style={{
+                          flex: 1, minWidth: 0, padding: '6px 8px', borderRadius: 6, fontSize: 11,
+                          background: (iplMatchIds[m.id] || '').startsWith('manual-') ? 'rgba(245,158,11,0.07)' : 'rgba(255,255,255,0.05)',
+                          border: (iplMatchIds[m.id] || '').startsWith('manual-') ? '1px solid rgba(245,158,11,0.4)' : '1px solid rgba(16,185,129,0.3)',
+                          color: (iplMatchIds[m.id] || '').startsWith('manual-') ? 'var(--gold)' : 'var(--text-primary)',
+                          fontFamily: "'Sora',sans-serif",
+                        }}
+                      />
+                      <button
+                        onClick={async () => {
+                          const newId = (iplMatchIds[m.id] || '').trim();
+                          if (!newId) { showToast('Enter a valid ID', 'error'); return; }
+                          const res = await fetch(`${API_BASE}/admin/matches/${m.id}/ipl-match-id`, {
+                            method: 'PUT',
+                            headers: { ...authHeader(), 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ ipl_match_id: newId }),
+                          });
+                          if (res.ok) { showToast('IPL Match ID saved'); loadData(); }
+                          else showToast('❌ Failed to save', 'error');
+                        }}
+                        title="Save IPL Match ID"
+                        style={{
+                          padding: '6px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700,
+                          cursor: 'pointer', background: 'rgba(16,185,129,0.12)',
+                          border: '1px solid rgba(16,185,129,0.4)', color: 'var(--green)',
+                        }}
+                      >
+                        Save
+                      </button>
+                    </div>
                     {/* Cricket Live ID input */}
                     <div style={{ display: 'flex', gap: 4 }}>
                       <input

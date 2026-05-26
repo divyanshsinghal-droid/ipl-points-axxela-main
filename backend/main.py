@@ -878,6 +878,49 @@ def set_cricket_live_id(match_id: int, cricket_live_id: Optional[int] = None,
     return {"status": "ok", "cricket_live_match_id": cricket_live_id}
 
 
+@app.post("/admin/matches")
+def create_match_manual(body: dict, db: Session = Depends(get_db),
+                        current_admin: dict = Depends(auth.get_current_admin)):
+    import uuid
+    team1 = (body.get("team1") or "").strip()
+    team2 = (body.get("team2") or "").strip()
+    match_date_str = (body.get("match_date") or "").strip()
+    if not team1 or not team2 or not match_date_str:
+        raise HTTPException(status_code=400, detail="team1, team2, and match_date are required")
+    try:
+        dt = datetime.datetime.fromisoformat(match_date_str.replace("Z", ""))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid match_date — use ISO 8601")
+    deadline = dt - datetime.timedelta(minutes=30)
+    placeholder_id = f"manual-{uuid.uuid4().hex[:8]}"
+    m = models.Match(
+        ipl_match_id=placeholder_id,
+        team1=team1,
+        team2=team2,
+        match_date=dt,
+        deadline=deadline,
+        is_completed=False,
+    )
+    db.add(m)
+    db.commit()
+    db.refresh(m)
+    return _serialize_match(m)
+
+
+@app.put("/admin/matches/{match_id}/ipl-match-id")
+def update_ipl_match_id(match_id: int, body: dict, db: Session = Depends(get_db),
+                        current_admin: dict = Depends(auth.get_current_admin)):
+    match = db.query(models.Match).filter_by(id=match_id).first()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+    new_id = (body.get("ipl_match_id") or "").strip()
+    if not new_id:
+        raise HTTPException(status_code=400, detail="ipl_match_id cannot be empty")
+    match.ipl_match_id = new_id
+    db.commit()
+    return {"status": "ok", "ipl_match_id": new_id}
+
+
 @app.get("/admin/players-for-match/{match_id}")
 def get_players_for_match(match_id: int, db: Session = Depends(get_db),
                           current_admin: dict = Depends(auth.get_current_admin)):
